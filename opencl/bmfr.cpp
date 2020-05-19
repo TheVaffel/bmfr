@@ -318,7 +318,7 @@ int tasks()
         if (!result.success)
         {
             error = true;
-            printf("Position buffer loading failed, reason: %s\n",
+            printf("Noisy buffer loading failed, reason: %s\n",
                    result.error_message.c_str());
             continue;
         }
@@ -584,6 +584,9 @@ int tasks()
         printf("One or more errors occurred during image saving\n");
         return 1;
     }
+    
+
+    printf("Wrote images with format %s\n", OUTPUT_FILE_NAME);
 
     return 0;
 }
