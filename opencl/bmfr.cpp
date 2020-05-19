@@ -33,6 +33,8 @@
 #include "OpenImageIO/imageio.h"
 #include "CLUtils/CLUtils.hpp"
 
+namespace OpenImageIO = OIIO;
+
 #define _CRT_SECURE_NO_WARNINGS
 #define STR_HELPER(x) #x
 #define STR(x) STR_HELPER(x)
@@ -153,12 +155,16 @@ struct Operation_result
 Operation_result read_image_file(
     const std::string &file_name, const int frame, float *buffer)
 {
-    OpenImageIO::ImageInput *in = OpenImageIO::ImageInput::open(
+  std::unique_ptr<OpenImageIO::ImageInput> in = OpenImageIO::ImageInput::open(
         file_name + std::to_string(frame) + ".exr");
     if (!in || in->spec().width != IMAGE_WIDTH ||
         in->spec().height != IMAGE_HEIGHT || in->spec().nchannels != 3)
     {
-
+      if(!in) {
+	std::cerr << "Could not open " << (file_name + std::to_string(frame) + ".exr") << std::endl;
+      }
+      // std::cout << "in = " << in << std::endl;
+      // std::cout << "width = " << in->spec().width << ", height = " << in->spec().height << ", nchannels = " << in->spec().nchannels << std::endl;
         return {false, "Can't open image file or it has wrong type: " + file_name};
     }
 
