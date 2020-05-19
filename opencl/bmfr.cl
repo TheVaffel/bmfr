@@ -22,6 +22,7 @@
  *  THE SOFTWARE.
  */
 
+
 // Unrolled parallel reduction. Works only with 256 inputs
 static inline void parallel_reduction_sum(
       __local float *result,
@@ -862,7 +863,11 @@ __kernel void taa(
       const __global float* restrict new_frame,
       __global float* restrict result_frame,
       const __global float* restrict prev_frame,
-      const int frame_number){
+      const int frame_number
+#ifdef WITH_VISBUF
+      , __global float* restrict vis_buffer
+#endif
+		  ){
 
    // Return if out of image
    const int2 pixel = (int2){get_global_id(0), get_global_id(1)};
@@ -886,6 +891,10 @@ __kernel void taa(
       prev_frame_pixel.x >= IMAGE_WIDTH || prev_frame_pixel.y >= IMAGE_HEIGHT){
 
       store_float3(result_frame, linear_pixel, my_new_color);
+#ifdef WITH_VISBUF
+      store_float3(vis_buffer, linear_pixel, (float3){0, 0, 1.0});
+#endif
+      
       return;
    }
 
@@ -971,4 +980,8 @@ __kernel void taa(
    float3 result_color = TAA_BLEND_ALPHA * my_new_color +
       (1.f - TAA_BLEND_ALPHA) * prev_color_rgb;
    store_float3(result_frame, linear_pixel, result_color);
+   
+#ifdef WITH_VISBUF
+   store_float3(vis_buffer, linear_pixel, result_color);
+#endif
 }

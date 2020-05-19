@@ -22,6 +22,14 @@
  *  THE SOFTWARE.
  */
 
+// #define WITH_VISBUF
+
+#ifdef WITH_VISBUF
+#pragma message "Compiling with visualization buffer"
+#else
+#pragma message "Compiling without visualization buffer"
+#endif // WITH_VISBUF
+
 #include "OpenImageIO/imageio.h"
 #include "CLUtils/CLUtils.hpp"
 
@@ -229,7 +237,11 @@ int tasks()
         " -D CACHE_TMP_DATA=" << STR(CACHE_TMP_DATA) <<
         " -D ADD_REQD_WG_SIZE=" << STR(ADD_REQD_WG_SIZE) <<
         " -D LOCAL_SIZE=" << STR(LOCAL_SIZE) <<
-        " -D USE_HALF_PRECISION_IN_TMP_DATA=" << STR(USE_HALF_PRECISION_IN_TMP_DATA);
+        " -D USE_HALF_PRECISION_IN_TMP_DATA=" << STR(USE_HALF_PRECISION_IN_TMP_DATA)
+#ifdef WITH_VISBUF
+			    << " -D WITH_VISBUF "
+#endif // WITH_VISBUF
+      ;
 
     cl::Kernel &fitter_kernel(clEnv.addProgram(0, "bmfr.cl", "fitter",
         build_options.str().c_str()));
@@ -341,6 +353,11 @@ int tasks()
                                 (FITTER_GLOBAL / 256) * 6 * sizeof(cl_float2));
     Double_buffer<cl::Buffer> spp_buffer(context, CL_MEM_READ_WRITE,
                                          OUTPUT_SIZE * sizeof(cl_char));
+
+#ifdef WITH_VISBUF
+    cl::Buffer vis_buffer(context, CL_MEM_READ_WRITE,
+			  OUTPUT_SIZE * 3 * sizeof(cl_float));
+#endif
 
     std::vector<Double_buffer<cl::Buffer> *> all_double_buffers = {
         &normals_buffer, &positions_buffer, &noisy_buffer,
@@ -472,12 +489,22 @@ int tasks()
         taa_kernel.setArg(arg_index++, *result_buffer.current());
         taa_kernel.setArg(arg_index++, *result_buffer.previous());
         taa_kernel.setArg(arg_index++, sizeof(cl_int), &frame);
+#ifdef WITH_VISBUF
+	taa_kernel.setArg(arg_index++, vis_buffer); //
+#endif
+		
         queue.enqueueNDRangeKernel(taa_kernel, cl::NullRange, output_global, local,
                                    nullptr, &taa_timer[matrix_index].event());
 
         // This is not timed because in real use case the result is stored to frame buffer
-        queue.enqueueReadBuffer(*result_buffer.current(), false, 0,
-                                OUTPUT_SIZE * 3 * sizeof(cl_float), out_data[frame].data());
+#ifdef WITH_VISBUF
+	queue.enqueueReadBuffer(vis_buffer, false, 0,
+	 			OUTPUT_SIZE * 3 * sizeof(cl_float), out_data[frame].data()); //
+#else
+	queue.enqueueReadBuffer(*result_buffer.current(), false, 0,
+				OUTPUT_SIZE * 3 * sizeof(cl_float), out_data[frame].data());
+
+#endif 
 
         // Swap all double buffers
         std::for_each(all_double_buffers.begin(), all_double_buffers.end(),

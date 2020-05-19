@@ -50,6 +50,9 @@ endif
 bmfr: bmfr.cpp CLUtils/CLUtils.hpp CLUtils/CLUtils.cpp
 	$(CC) $(CFLAGS) -o $@ $^ $(INC_DIRS:%=-I%) $(LIB_DIRS:%=-L%) $(LIBS)
 
+bmfr-debug: bmfr.cpp CLUtils/CLUtils.hpp CLUtils/CLUtils.cpp 
+	$(CC) $(CFLAGS) -o $@ $^ $(INC_DIRS:%=-I%) $(LIB_DIRS:%=-L%) $(LIBS) -D WITH_VISBUF
+
 .PHONY: clean
 
 clean:
