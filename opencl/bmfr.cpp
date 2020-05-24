@@ -190,7 +190,10 @@ float clamp(float value, float minimum, float maximum)
     return std::max(std::min(value, maximum), minimum);
 }
 
-int tasks()
+int tasks(ImageData& image_data,
+	  const std::string& not_scaled_feature_buffers,
+	  const std::string& scaled_feature_buffers,
+	  std::ostream& output_stream = std::cout)
 {
 
     printf("Initialize.\n");

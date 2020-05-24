@@ -310,25 +310,25 @@ namespace clutils
          *  \param[in] bLine a flag for whether or not to print a newline 
          *                   at the end of the table.
          */
-        void print (const char *title = nullptr, bool bLine = true)
+      void print (std::ostream& stream, const char *title = nullptr, bool bLine = true)
         {
-            std::ios::fmtflags f (std::cout.flags ());
-            std::cout << std::fixed << std::setprecision (3);
+            std::ios::fmtflags f (stream.flags ());
+	    stream << std::fixed << std::setprecision (3);
 
             if (title)
-                std::cout << std::endl << title << std::endl << std::endl;
+                stream << std::endl << title << std::endl << std::endl;
             else
-                std::cout << std::endl;
+                stream << std::endl;
 
-            std::cout << " " << label << std::endl;
-            std::cout << " " << std::string (label.size (), '-') << std::endl;
-            std::cout << "   Mean   : " << std::setw (tWidth) << mean ()  << " " << tUnit << std::endl;
-            std::cout << "   Min    : " << std::setw (tWidth) << min ()   << " " << tUnit << std::endl;
-            std::cout << "   Max    : " << std::setw (tWidth) << max ()   << " " << tUnit << std::endl;
-            std::cout << "   Total  : " << std::setw (tWidth) << total () << " " << tUnit << std::endl;
-            if (bLine) std::cout << std::endl;
+            stream << " " << label << std::endl;
+            stream << " " << std::string (label.size (), '-') << std::endl;
+            stream << "   Mean   : " << std::setw (tWidth) << mean ()  << " " << tUnit << std::endl;
+            stream << "   Min    : " << std::setw (tWidth) << min ()   << " " << tUnit << std::endl;
+            stream << "   Max    : " << std::setw (tWidth) << max ()   << " " << tUnit << std::endl;
+            stream << "   Total  : " << std::setw (tWidth) << total () << " " << tUnit << std::endl;
+            if (bLine) stream << std::endl;
 
-            std::cout.flags (f);
+            stream.flags (f);
         }
 
         /*! \brief Displays summarizing results on two tests.
@@ -340,17 +340,17 @@ namespace clutils
          *  \param[in] refProf a reference test.
          *  \param[in] title a title for the table of results.
          */
-        void print (ProfilingInfo &refProf, const char *title = nullptr)
+      void print (ProfilingInfo &refProf, const char *title = nullptr, std::ostream& stream = std::cout)
         {
             if (title)
-                std::cout << std::endl << title << std::endl;
+                stream << std::endl << title << std::endl;
 
-            refProf.print (nullptr, false);
-            print (nullptr, false);
+            refProf.print (stream, nullptr, false);
+            print (stream, nullptr, false);
 
-            std::cout << std::endl << " Benchmark" << std::endl << " ---------" << std::endl;
+            stream << std::endl << " Benchmark" << std::endl << " ---------" << std::endl;
             
-            std::cout << "   Speedup: " << std::setw (tWidth) << speedup (refProf) << std::endl << std::endl;
+            stream << "   Speedup: " << std::setw (tWidth) << speedup (refProf) << std::endl << std::endl;
         }
 
     private:
