@@ -87,6 +87,31 @@ static inline void parallel_reduction_max(
    barrier(CLK_LOCAL_MEM_FENCE);
 }
 
+static inline float3 linear_to_srgb(float3 x) {
+  float3 r;
+  
+  // Adapted from cuda_utils.h in TwinkleBear's ChameleonRT
+  if(x.x <= 0.0031308f) {
+    r.x = 12.92f * x.x;
+  } else {
+    r.x = 1.055f * powr(x.x, 1.f/2.4f) - 0.055f;
+  }
+
+  if(x.y <= 0.0031308f) {
+    r.y = 12.92f * x.y;
+  } else {
+    r.y = 1.055f * powr(x.y, 1.f/2.4f) - 0.055f;
+  }
+
+  if(x.z <= 0.0031308f) {
+    r.z = 12.92f * x.z;
+  } else {
+    r.z = 1.055f * powr(x.z, 1.f/2.4f) - 0.055f;
+  }
+  
+  return r;
+}
+
 // Helper defines used in IN_ACCESS define
 #define BLOCK_EDGE_HALF (BLOCK_EDGE_LENGTH / 2)
 #define HORIZONTAL_BLOCKS (WORKSET_WIDTH / BLOCK_EDGE_LENGTH)
@@ -851,9 +876,8 @@ __kernel void accumulate_filtered_data(
 
    // Remodulate albedo and tone map
    float3 my_albedo = load_float3(albedo, linear_pixel);
-   const float3 tone_mapped_color = clamp(
-      powr(max(0.f, my_albedo * accumulated_color), 0.454545f), 0.f, 1.f);
-
+   const float3 tone_mapped_color = clamp(linear_to_srgb(my_albedo * accumulated_color), 0.f, 1.f);
+					  
    store_float3(tone_mapped_frame, linear_pixel, tone_mapped_color);
 }
 
