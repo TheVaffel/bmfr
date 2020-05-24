@@ -2,6 +2,8 @@ CC=g++
 
 CFLAGS= -std=c++11 -Wall -DUNIX -g -DDEBUG
 
+DIFFCAL_DIR := /home/haakon/Dropbox/Documents/NTNU/TDT4900/dataconstruction/denoise_util/diffcal
+
 # Check for 32-bit vs 64-bit
 PROC_TYPE = $(strip $(shell uname -m | grep 64))
 
@@ -52,6 +54,9 @@ bmfr: bmfr.cpp CLUtils/CLUtils.hpp CLUtils/CLUtils.cpp
 
 bmfr-debug: bmfr.cpp CLUtils/CLUtils.hpp CLUtils/CLUtils.cpp 
 	$(CC) $(CFLAGS) -o $@ $^ $(INC_DIRS:%=-I%) $(LIB_DIRS:%=-L%) $(LIBS) -D WITH_VISBUF
+
+bmfr-evaluate: bmfr.cpp CLUtils/CLUtils.hpp CLUtils/CLUtils.cpp
+	$(CC) $(CFLAGS) -o $@ $^ $(INC_DIRS:%=-I%) $(LIB_DIRS:%=-L%) $(LIBS) -D EVALUATION_MODE -I $(DIFFCAL_DIR) -l diffcal -L $(DIFFCAL_DIR)
 
 .PHONY: clean
 

@@ -22,13 +22,19 @@
  *  THE SOFTWARE.
  */
 
-// #define WITH_VISBUF
-
 #ifdef WITH_VISBUF
 #pragma message "Compiling with visualization buffer"
 #else
 #pragma message "Compiling without visualization buffer"
 #endif // WITH_VISBUF
+
+#include <fstream>
+
+#include "bmfr.hpp"
+
+#ifdef EVALUATION_MODE
+#include <diffcal.hpp>
+#endif
 
 #include "OpenImageIO/imageio.h"
 #include "CLUtils/CLUtils.hpp"
@@ -61,6 +67,10 @@ namespace OpenImageIO = OIIO;
 #define POSITION_FILE_NAME INPUT_DATA_PATH_STR"/world_position"
 #define ALBEDO_FILE_NAME INPUT_DATA_PATH_STR"/albedo"
 #define OUTPUT_FILE_NAME "outputs/output"
+
+#ifdef EVALUATION_MODE
+#define REFERENCE_FILE_NAME "/home/haakon/Documents/NTNU/TDT4900/dataconstruction/reference_sponza/color"
+#endif
 
 
 // ### Edit these defines if you want to experiment different parameters ###
@@ -152,6 +162,7 @@ struct Operation_result
         success(success), error_message(error_message) {}
 };
 
+  
 Operation_result read_image_file(
     const std::string &file_name, const int frame, float *buffer)
 {
@@ -185,6 +196,127 @@ Operation_result load_image(cl_float *image, const std::string file_name, const 
     return {true};
 }
 
+
+ImageData initializeData() {
+  ImageData image_data;
+  printf("Loading input data.\n");
+  bool error = false;
+  
+  #pragma omp parallel for
+    for (int frame = 0; frame < FRAME_COUNT; ++frame)
+    {
+        if (error)
+            continue;
+
+        image_data.out_data[frame].resize(3 * OUTPUT_SIZE);
+
+        image_data.albedos[frame].resize(3 * IMAGE_WIDTH * IMAGE_HEIGHT);
+        Operation_result result = load_image(image_data.albedos[frame].data(), ALBEDO_FILE_NAME,
+            frame);
+        if (!result.success)
+        {
+            error = true;
+            printf("Albedo buffer loading failed, reason: %s\n",
+                   result.error_message.c_str());
+            continue;
+        }
+
+        image_data.normals[frame].resize(3 * IMAGE_WIDTH * IMAGE_HEIGHT);
+        result = load_image(image_data.normals[frame].data(), NORMAL_FILE_NAME, frame);
+        if (!result.success)
+        {
+            error = true;
+            printf("Normal buffer loading failed, reason: %s\n",
+                   result.error_message.c_str());
+            continue;
+        }
+
+        image_data.positions[frame].resize(3 * IMAGE_WIDTH * IMAGE_HEIGHT);
+        result = load_image(image_data.positions[frame].data(), POSITION_FILE_NAME, frame);
+        if (!result.success)
+        {
+            error = true;
+            printf("Position buffer loading failed, reason: %s\n",
+                   result.error_message.c_str());
+            continue;
+        }
+
+        image_data.noisy_input[frame].resize(3 * IMAGE_WIDTH * IMAGE_HEIGHT);
+        result = load_image(image_data.noisy_input[frame].data(), NOISY_FILE_NAME, frame);
+        if (!result.success)
+        {
+            error = true;
+            printf("Noisy buffer loading failed, reason: %s\n",
+                   result.error_message.c_str());
+            continue;
+        }
+#ifdef EVALUATION_MODE
+	image_data.reference_data[frame].resize(3 * IMAGE_WIDTH * IMAGE_HEIGHT);
+	result = load_image(image_data.reference_data[frame].data(), REFERENCE_FILE_NAME, frame);
+	if(!result.success)
+	  {
+	    error = true;
+	    printf("Reference buffer loading failed, reason: %s\n",
+		   result.error_message.c_str());
+	    continue;
+	  }
+#endif
+
+	std::cout << "Read buffers for frame " << frame << std::endl;
+    }
+
+    if (error)
+    {
+        printf("One or more errors occurred during buffer loading\n");
+        exit(-1);
+    }
+
+    return image_data;
+}
+
+void writeOutputImages(const ImageData& image_data, const std::string& output_file) {
+  
+    // Store results
+    bool error = false;
+#pragma omp parallel for
+    for (int frame = 0; frame < FRAME_COUNT; ++frame)
+    {
+        if (error)
+            continue;
+
+        // Output image
+        std::string output_file_name = output_file + std::to_string(frame) + ".png";
+        // Crops back from WORKSET_SIZE to IMAGE_SIZE
+        OpenImageIO::ImageSpec spec(IMAGE_WIDTH, IMAGE_HEIGHT, 3,
+                                    OpenImageIO::TypeDesc::FLOAT);
+        std::unique_ptr<OpenImageIO::ImageOutput>
+            out(OpenImageIO::ImageOutput::create(output_file_name));
+        if (out && out->open(output_file_name, spec))
+        {
+            out->write_image(OpenImageIO::TypeDesc::FLOAT, image_data.out_data[frame].data(),
+                             3 * sizeof(cl_float), WORKSET_WIDTH * 3 * sizeof(cl_float), 0);
+            out->close();
+        }
+        else
+        {
+            printf("Can't create image file on disk to location %s\n",
+                   output_file_name.c_str());
+            error = true;
+            continue;
+        }
+    }
+
+    if (error)
+    {
+        printf("One or more errors occurred during image saving\n");
+	exit(-1);
+    }
+    
+
+    printf("Wrote images with format %s\n", output_file.c_str());
+  
+}
+
 float clamp(float value, float minimum, float maximum)
 {
     return std::max(std::min(value, maximum), minimum);
@@ -207,8 +339,8 @@ int tasks(ImageData& image_data,
 
     cl::CommandQueue &queue(clEnv.addQueue(0, DEVICE_INDEX, CL_QUEUE_PROFILING_ENABLE));
 
-    std::string features_not_scaled(NOT_SCALED_FEATURE_BUFFERS);
-    std::string features_scaled(SCALED_FEATURE_BUFFERS);
+    std::string features_not_scaled(not_scaled_feature_buffers);
+    std::string features_scaled(scaled_feature_buffers);
     const int features_not_scaled_count =
         std::count(features_not_scaled.begin(), features_not_scaled.end(), ',');
     // + 1 because last one does not have ',' after it.
@@ -217,7 +349,7 @@ int tasks(ImageData& image_data,
 
     // + 3 stands for three noisy channels.
     const int buffer_count = features_not_scaled_count + features_scaled_count + 3;
-
+    
     // Create and build the kernel
     std::stringstream build_options;
     build_options <<
@@ -228,7 +360,7 @@ int tasks(ImageData& image_data,
         " -D IMAGE_HEIGHT=" << IMAGE_HEIGHT <<
         " -D WORKSET_WIDTH=" << WORKSET_WIDTH <<
         " -D WORKSET_HEIGHT=" << WORKSET_HEIGHT <<
-        " -D FEATURE_BUFFERS=" << NOT_SCALED_FEATURE_BUFFERS SCALED_FEATURE_BUFFERS <<
+      " -D FEATURE_BUFFERS=" << (not_scaled_feature_buffers + scaled_feature_buffers) <<
         " -D LOCAL_WIDTH=" << LOCAL_WIDTH <<
         " -D LOCAL_HEIGHT=" << LOCAL_HEIGHT <<
         " -D WORKSET_WITH_MARGINS_WIDTH=" << WORKSET_WITH_MARGINS_WIDTH <<
@@ -268,70 +400,6 @@ int tasks(ImageData& image_data,
     cl::NDRange local(LOCAL_WIDTH, LOCAL_HEIGHT);
     cl::NDRange fitter_global(FITTER_GLOBAL);
     cl::NDRange fitter_local(LOCAL_SIZE);
-
-    // Data arrays
-    printf("Loading input data.\n");
-    std::vector<cl_float> out_data[FRAME_COUNT];
-    std::vector<cl_float> albedos[FRAME_COUNT];
-    std::vector<cl_float> normals[FRAME_COUNT];
-    std::vector<cl_float> positions[FRAME_COUNT];
-    std::vector<cl_float> noisy_input[FRAME_COUNT];
-    bool error = false;
-#pragma omp parallel for
-    for (int frame = 0; frame < FRAME_COUNT; ++frame)
-    {
-        if (error)
-            continue;
-
-        out_data[frame].resize(3 * OUTPUT_SIZE);
-
-        albedos[frame].resize(3 * IMAGE_WIDTH * IMAGE_HEIGHT);
-        Operation_result result = load_image(albedos[frame].data(), ALBEDO_FILE_NAME,
-            frame);
-        if (!result.success)
-        {
-            error = true;
-            printf("Albedo buffer loading failed, reason: %s\n",
-                   result.error_message.c_str());
-            continue;
-        }
-
-        normals[frame].resize(3 * IMAGE_WIDTH * IMAGE_HEIGHT);
-        result = load_image(normals[frame].data(), NORMAL_FILE_NAME, frame);
-        if (!result.success)
-        {
-            error = true;
-            printf("Normal buffer loading failed, reason: %s\n",
-                   result.error_message.c_str());
-            continue;
-        }
-
-        positions[frame].resize(3 * IMAGE_WIDTH * IMAGE_HEIGHT);
-        result = load_image(positions[frame].data(), POSITION_FILE_NAME, frame);
-        if (!result.success)
-        {
-            error = true;
-            printf("Position buffer loading failed, reason: %s\n",
-                   result.error_message.c_str());
-            continue;
-        }
-
-        noisy_input[frame].resize(3 * IMAGE_WIDTH * IMAGE_HEIGHT);
-        result = load_image(noisy_input[frame].data(), NOISY_FILE_NAME, frame);
-        if (!result.success)
-        {
-            error = true;
-            printf("Noisy buffer loading failed, reason: %s\n",
-                   result.error_message.c_str());
-            continue;
-        }
-    }
-
-    if (error)
-    {
-        printf("One or more errors occurred during buffer loading\n");
-        return 1;
-    }
 
     // Create buffers
     Double_buffer<cl::Buffer> normals_buffer(context,
@@ -444,13 +512,13 @@ int tasks(ImageData& image_data,
     {
 
         queue.enqueueWriteBuffer(albedo_buffer, true, 0, IMAGE_WIDTH * IMAGE_HEIGHT * 3 *
-                                 sizeof(cl_float), albedos[frame].data());
+                                 sizeof(cl_float), image_data.albedos[frame].data());
         queue.enqueueWriteBuffer(*normals_buffer.current(), true, 0, IMAGE_WIDTH *
-                                 IMAGE_HEIGHT * 3 * sizeof(cl_float), normals[frame].data());
+                                 IMAGE_HEIGHT * 3 * sizeof(cl_float), image_data.normals[frame].data());
         queue.enqueueWriteBuffer(*positions_buffer.current(), true, 0, IMAGE_WIDTH *
-                                 IMAGE_HEIGHT * 3 * sizeof(cl_float), positions[frame].data());
+                                 IMAGE_HEIGHT * 3 * sizeof(cl_float), image_data.positions[frame].data());
         queue.enqueueWriteBuffer(*noisy_buffer.current(), true, 0, IMAGE_WIDTH * IMAGE_HEIGHT *
-                                 3 * sizeof(cl_float), noisy_input[frame].data());
+                                 3 * sizeof(cl_float), image_data.noisy_input[frame].data());
 
         // On the first frame accum_noisy_kernel just copies to the in_buffer
         arg_index = 2;
@@ -508,10 +576,10 @@ int tasks(ImageData& image_data,
         // This is not timed because in real use case the result is stored to frame buffer
 #ifdef WITH_VISBUF
 	queue.enqueueReadBuffer(vis_buffer, false, 0,
-	 			OUTPUT_SIZE * 3 * sizeof(cl_float), out_data[frame].data()); //
+	 			OUTPUT_SIZE * 3 * sizeof(cl_float), image_data.out_data[frame].data()); //
 #else
 	queue.enqueueReadBuffer(*result_buffer.current(), false, 0,
-				OUTPUT_SIZE * 3 * sizeof(cl_float), out_data[frame].data());
+				OUTPUT_SIZE * 3 * sizeof(cl_float), image_data.out_data[frame].data());
 
 #endif 
 
@@ -542,63 +610,95 @@ int tasks(ImageData& image_data,
     }
 
     if (FRAME_COUNT > 1)
-        profile_info_accum_noisy.print();
-    profile_info_fitter.print();
-    profile_info_weighted_sum.print();
+        profile_info_accum_noisy.print(output_stream);
+    profile_info_fitter.print(output_stream);
+    profile_info_weighted_sum.print(output_stream);
     if (FRAME_COUNT > 1)
     {
-        profile_info_accum_filtered.print();
-        profile_info_taa.print();
-        profile_info_total.print();
+        profile_info_accum_filtered.print(output_stream);
+        profile_info_taa.print(output_stream);
+        profile_info_total.print(output_stream);
     }
-
-    // Store results
-    error = false;
-#pragma omp parallel for
-    for (int frame = 0; frame < FRAME_COUNT; ++frame)
-    {
-        if (error)
-            continue;
-
-        // Output image
-        std::string output_file_name = OUTPUT_FILE_NAME + std::to_string(frame) + ".png";
-        // Crops back from WORKSET_SIZE to IMAGE_SIZE
-        OpenImageIO::ImageSpec spec(IMAGE_WIDTH, IMAGE_HEIGHT, 3,
-                                    OpenImageIO::TypeDesc::FLOAT);
-        std::unique_ptr<OpenImageIO::ImageOutput>
-            out(OpenImageIO::ImageOutput::create(output_file_name));
-        if (out && out->open(output_file_name, spec))
-        {
-            out->write_image(OpenImageIO::TypeDesc::FLOAT, out_data[frame].data(),
-                             3 * sizeof(cl_float), WORKSET_WIDTH * 3 * sizeof(cl_float), 0);
-            out->close();
-        }
-        else
-        {
-            printf("Can't create image file on disk to location %s\n",
-                   output_file_name.c_str());
-            error = true;
-            continue;
-        }
-    }
-
-    if (error)
-    {
-        printf("One or more errors occurred during image saving\n");
-        return 1;
-    }
-    
-
-    printf("Wrote images with format %s\n", OUTPUT_FILE_NAME);
 
     return 0;
 }
+
+#ifdef EVALUATION_MODE
+int run_evaluation_mode(ImageData& image_data) {
+  ImageDataIterator image_iterator(0, image_data, IMAGE_WIDTH, IMAGE_HEIGHT);
+  std::cout << "Image width/height: " << IMAGE_WIDTH << ", " << IMAGE_HEIGHT << std::endl;
+
+  std::vector<std::string> not_scaled_buffers = {
+    "1.f",
+    "normal.x",
+    "normal.y",
+    "normal.z"
+  };
+    
+  std::vector<std::string> scaled_buffers = {
+    "world_position.x",
+    "world_position.y",
+    "world_position.z",
+    "world_position.x*world_position.x",
+    "world_position.y*world_position.y",
+    "world_position.z*world_position.z"
+  };
+
+  std::string str1 = not_scaled_buffers[0];
+  std::string str2 = "";
+  int num = 1;
+
+  std::ofstream result_stream("results/results.txt");
+  
+  while(true) {
+    tasks(image_data,
+	  str1,
+	  str2, result_stream);
+    if(num < (int)not_scaled_buffers.size()) {
+      str1 += "," + not_scaled_buffers[num];
+    } else if(num - not_scaled_buffers.size() < scaled_buffers.size()) {
+      str2 += ",";
+      str2 += scaled_buffers[num - not_scaled_buffers.size()];
+    } else {
+      std::cout << "Iterated through all buffers" << std::endl;
+      break;
+    }
+
+    DiffResultState diff_result = computeDiff(image_iterator);
+
+    // std::cout << "RMSE result using " << num << " feature buffers: " << diff_result.means[DIFF_RMSE_INDEX] << std::endl;
+    // std::cout << "VMAF result using " << num << " feature buffers: " << diff_result.means[DIFF_VMAF_INDEX] << std::endl;
+    outputResult(diff_result, "results/diff_results" + std::to_string(num) + ".txt");
+    
+    writeOutputImages(image_data, "results/" + std::to_string(num) + "buffers");
+						 
+    num++;
+    image_iterator.reset();
+
+  }
+
+  result_stream.close();
+ 
+  return 0;
+}
+#endif // EVALUATION_MODE
 
 int main()
 {
     try
     {
-        return tasks();
+      
+      ImageData image_data = initializeData();
+#ifdef EVALUATION_MODE
+      return run_evaluation_mode(image_data);
+#else
+      
+      int result = tasks(image_data,
+			 NOT_SCALED_FEATURE_BUFFERS,
+			 SCALED_FEATURE_BUFFERS);
+      writeOutputImages(image_data, OUTPUT_FILE_NAME);
+      return result;
+#endif
     }
     catch (std::exception &err)
     {
