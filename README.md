@@ -1,5 +1,15 @@
 # Blockwise Multi-Order Feature Regression for Real-Time Path Tracing Reconstruction
 
+**Notice**:
+
+This code has been modified by Håkon Flatval during the spring 2020.
+
+The changes are small and mostly consider the command line interface.
+
+The rest of this README is from the original repository.
+
+**End Notice**
+
 This is the code used in the paper:
 
 "Blockwise Multi-Order Feature Regression for Real-Time Path Tracing Reconstruction".
