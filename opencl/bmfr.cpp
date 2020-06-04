@@ -49,15 +49,10 @@ namespace OpenImageIO = OIIO;
 #define PLATFORM_INDEX 0
 #define DEVICE_INDEX 0
 
-
-// ### Edit these defines if you have different input ###
-// TODO detect IMAGE_SIZES automatically from the input files
-#define IMAGE_WIDTH 1280
-#define IMAGE_HEIGHT 720
-// TODO detect FRAME_COUNT from the input files
-#define FRAME_COUNT 60
 // Location where input frames and feature buffers are located
-#define INPUT_DATA_PATH ../data/frames
+// #define INPUT_DATA_PATH /home/haakon/data/bmfr_data/sponza-(static-camera)/inputs
+#define INPUT_DATA_PATH /home/haakon/Documents/NTNU/TDT4900/dataconstruction/output
+
 #define INPUT_DATA_PATH_STR STR(INPUT_DATA_PATH)
 // camera_matrices.h is expected to be in the same folder
 #include STR(INPUT_DATA_PATH/camera_matrices.h)
