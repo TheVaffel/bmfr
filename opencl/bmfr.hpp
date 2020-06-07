@@ -25,6 +25,41 @@ struct ImageData {
 #endif
 };
 
+struct ProfileState {
+    
+    static const int NUM_STAGES = 6;
+    std::vector<std::vector<double> > times;
+
+    ProfileState() : times(NUM_STAGES) { }
+    
+    enum Indices {
+	accumulation_noisy = 0,
+	fitting,
+	weighted_sum,
+	accumulation_filtered,
+	taa,
+	total
+    };
+    
+    static std::string STAGE_NAMES[ProfileState::NUM_STAGES];
+};
+
+struct OpenCLState {
+    clutils::CLEnv clEnv;
+    cl::Context context;
+    cl::CommandQueue queue;
+};
+
+
+std::string ProfileState::STAGE_NAMES[ProfileState::NUM_STAGES] = {
+    "accum_noisy",
+    "fitting",
+    "weighted_sum",
+    "accum_filtered",
+    "taa",
+    "total"
+};
+
 
 #ifdef EVALUATION_MODE
 

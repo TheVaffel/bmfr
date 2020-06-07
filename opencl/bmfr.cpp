@@ -36,6 +36,10 @@
 #include <diffcal.hpp>
 #endif
 
+#include <nlohmann/json.hpp>
+
+namespace json = nlohmann;
+
 #include "OpenImageIO/imageio.h"
 #include "CLUtils/CLUtils.hpp"
 
@@ -317,23 +321,37 @@ float clamp(float value, float minimum, float maximum)
     return std::max(std::min(value, maximum), minimum);
 }
 
+void initOpenCL(OpenCLState& ostate) {
+    
+    printf("Initialize.\n");
+    
+    ostate.context = cl::Context(ostate.clEnv.addContext(PLATFORM_INDEX));
+    
+    // Find name of the used device
+    std::string deviceName;
+    ostate.clEnv.devices[0][DEVICE_INDEX].getInfo(CL_DEVICE_NAME, &deviceName);
+    printf("Using device named: %s\n", deviceName.c_str());
+
+    ostate.queue = cl::CommandQueue(ostate.clEnv.addQueue(0, DEVICE_INDEX, CL_QUEUE_PROFILING_ENABLE));
+}
+
+json::json getProfileObj(ProfileState& profile_state) {
+    json::json obj = json::json::object();
+
+    for(int i = 0; i < ProfileState::NUM_STAGES; i++) {
+	obj[ProfileState::STAGE_NAMES[i]] = json::json(profile_state.times[i]);
+    }
+
+    return obj;
+}
+
 int tasks(ImageData& image_data,
+	  ProfileState& profile_state,
+	  OpenCLState& oc_state,
 	  const std::string& not_scaled_feature_buffers,
 	  const std::string& scaled_feature_buffers,
 	  std::ostream& output_stream = std::cout)
 {
-
-    printf("Initialize.\n");
-    clutils::CLEnv clEnv;
-    cl::Context &context(clEnv.addContext(PLATFORM_INDEX));
-
-    // Find name of the used device
-    std::string deviceName;
-    clEnv.devices[0][DEVICE_INDEX].getInfo(CL_DEVICE_NAME, &deviceName);
-    printf("Using device named: %s\n", deviceName.c_str());
-
-    cl::CommandQueue &queue(clEnv.addQueue(0, DEVICE_INDEX, CL_QUEUE_PROFILING_ENABLE));
-
     std::string features_not_scaled(not_scaled_feature_buffers);
     std::string features_scaled(scaled_feature_buffers);
     const int features_not_scaled_count =
@@ -379,15 +397,15 @@ int tasks(ImageData& image_data,
 #endif // WITH_VISBUF
       ;
 
-    cl::Kernel &fitter_kernel(clEnv.addProgram(0, "bmfr.cl", "fitter",
+    cl::Kernel &fitter_kernel(oc_state.clEnv.addProgram(0, "bmfr.cl", "fitter",
         build_options.str().c_str()));
-    cl::Kernel &weighted_sum_kernel(clEnv.addProgram(0, "bmfr.cl", "weighted_sum",
+    cl::Kernel &weighted_sum_kernel(oc_state.clEnv.addProgram(0, "bmfr.cl", "weighted_sum",
         build_options.str().c_str()));
-    cl::Kernel &accum_noisy_kernel(clEnv.addProgram(0, "bmfr.cl", "accumulate_noisy_data",
+    cl::Kernel &accum_noisy_kernel(oc_state.clEnv.addProgram(0, "bmfr.cl", "accumulate_noisy_data",
         build_options.str().c_str()));
-    cl::Kernel &accum_filtered_kernel(clEnv.addProgram(0, "bmfr.cl", 
+    cl::Kernel &accum_filtered_kernel(oc_state.clEnv.addProgram(0, "bmfr.cl",
         "accumulate_filtered_data", build_options.str().c_str()));
-    cl::Kernel &taa_kernel(clEnv.addProgram(0, "bmfr.cl", "taa",
+    cl::Kernel &taa_kernel(oc_state.clEnv.addProgram(0, "bmfr.cl", "taa",
         build_options.str().c_str()));
 
     cl::NDRange accum_global(WORKSET_WITH_MARGINS_WIDTH, WORKSET_WITH_MARGINS_HEIGHT);
@@ -397,37 +415,37 @@ int tasks(ImageData& image_data,
     cl::NDRange fitter_local(LOCAL_SIZE);
 
     // Create buffers
-    Double_buffer<cl::Buffer> normals_buffer(context,
+    Double_buffer<cl::Buffer> normals_buffer(oc_state.context,
                                              CL_MEM_READ_WRITE, OUTPUT_SIZE * 3 * sizeof(cl_float));
-    Double_buffer<cl::Buffer> positions_buffer(context,
+    Double_buffer<cl::Buffer> positions_buffer(oc_state.context,
                                                CL_MEM_READ_WRITE, OUTPUT_SIZE * 3 * sizeof(cl_float));
-    Double_buffer<cl::Buffer> noisy_buffer(context,
+    Double_buffer<cl::Buffer> noisy_buffer(oc_state.context,
                                            CL_MEM_READ_WRITE, OUTPUT_SIZE * 3 * sizeof(cl_float));
     size_t in_buffer_data_size = USE_HALF_PRECISION_IN_TMP_DATA ? sizeof(cl_half) : sizeof(cl_float);
-    cl::Buffer in_buffer(context, CL_MEM_READ_WRITE, WORKSET_WITH_MARGINS_WIDTH * WORKSET_WITH_MARGINS_HEIGHT *
+    cl::Buffer in_buffer(oc_state.context, CL_MEM_READ_WRITE, WORKSET_WITH_MARGINS_WIDTH * WORKSET_WITH_MARGINS_HEIGHT *
                          buffer_count * in_buffer_data_size, nullptr);
-    cl::Buffer filtered_buffer(context, CL_MEM_READ_WRITE,
+    cl::Buffer filtered_buffer(oc_state.context, CL_MEM_READ_WRITE,
                                OUTPUT_SIZE * 3 * sizeof(cl_float));
-    Double_buffer<cl::Buffer> out_buffer(context, CL_MEM_READ_WRITE,
+    Double_buffer<cl::Buffer> out_buffer(oc_state.context, CL_MEM_READ_WRITE,
                                          WORKSET_WITH_MARGINS_WIDTH * WORKSET_WITH_MARGINS_HEIGHT * 3 * sizeof(cl_float));
-    Double_buffer<cl::Buffer> result_buffer(context, CL_MEM_READ_WRITE,
+    Double_buffer<cl::Buffer> result_buffer(oc_state.context, CL_MEM_READ_WRITE,
                                             OUTPUT_SIZE * 3 * sizeof(cl_float));
-    cl::Buffer prev_pixels_buffer(context, CL_MEM_READ_WRITE,
+    cl::Buffer prev_pixels_buffer(oc_state.context, CL_MEM_READ_WRITE,
                                   OUTPUT_SIZE * sizeof(cl_float2));
-    cl::Buffer accept_buffer(context, CL_MEM_READ_WRITE, OUTPUT_SIZE * sizeof(cl_uchar));
-    cl::Buffer albedo_buffer(context, CL_MEM_READ_ONLY,
+    cl::Buffer accept_buffer(oc_state.context, CL_MEM_READ_WRITE, OUTPUT_SIZE * sizeof(cl_uchar));
+    cl::Buffer albedo_buffer(oc_state.context, CL_MEM_READ_ONLY,
                              IMAGE_WIDTH * IMAGE_HEIGHT * 3 * sizeof(cl_float));
-    cl::Buffer tone_mapped_buffer(context, CL_MEM_READ_WRITE,
+    cl::Buffer tone_mapped_buffer(oc_state.context, CL_MEM_READ_WRITE,
                                   IMAGE_WIDTH * IMAGE_HEIGHT * 3 * sizeof(cl_float));
-    cl::Buffer weights_buffer(context, CL_MEM_READ_WRITE,
+    cl::Buffer weights_buffer(oc_state.context, CL_MEM_READ_WRITE,
                               (FITTER_GLOBAL / 256) * (buffer_count - 3) * 3 * sizeof(cl_float));
-    cl::Buffer mins_maxs_buffer(context, CL_MEM_READ_WRITE,
+    cl::Buffer mins_maxs_buffer(oc_state.context, CL_MEM_READ_WRITE,
                                 (FITTER_GLOBAL / 256) * 6 * sizeof(cl_float2));
-    Double_buffer<cl::Buffer> spp_buffer(context, CL_MEM_READ_WRITE,
+    Double_buffer<cl::Buffer> spp_buffer(oc_state.context, CL_MEM_READ_WRITE,
                                          OUTPUT_SIZE * sizeof(cl_char));
 
 #ifdef WITH_VISBUF
-    cl::Buffer vis_buffer(context, CL_MEM_READ_WRITE,
+    cl::Buffer vis_buffer(oc_state.context, CL_MEM_READ_WRITE,
 			  OUTPUT_SIZE * 3 * sizeof(cl_float));
 #endif
 
@@ -470,7 +488,7 @@ int tasks(ImageData& image_data,
     arg_index = 0;
     taa_kernel.setArg(arg_index++, prev_pixels_buffer);
     taa_kernel.setArg(arg_index++, tone_mapped_buffer);
-    queue.finish();
+    oc_state.queue.finish();
 
     std::vector<clutils::GPUTimer<std::milli>> accum_noisy_timer;
     std::vector<clutils::GPUTimer<std::milli>> copy_timer;
@@ -478,12 +496,12 @@ int tasks(ImageData& image_data,
     std::vector<clutils::GPUTimer<std::milli>> weighted_sum_timer;
     std::vector<clutils::GPUTimer<std::milli>> accum_filtered_timer;
     std::vector<clutils::GPUTimer<std::milli>> taa_timer;
-    accum_noisy_timer.assign(FRAME_COUNT - 1, clutils::GPUTimer<std::milli>(clEnv.devices[0][0]));
-    copy_timer.assign(FRAME_COUNT, clutils::GPUTimer<std::milli>(clEnv.devices[0][0]));
-    fitter_timer.assign(FRAME_COUNT, clutils::GPUTimer<std::milli>(clEnv.devices[0][0]));
-    weighted_sum_timer.assign(FRAME_COUNT, clutils::GPUTimer<std::milli>(clEnv.devices[0][0]));
-    accum_filtered_timer.assign(FRAME_COUNT - 1, clutils::GPUTimer<std::milli>(clEnv.devices[0][0]));
-    taa_timer.assign(FRAME_COUNT - 1, clutils::GPUTimer<std::milli>(clEnv.devices[0][0]));
+    accum_noisy_timer.assign(FRAME_COUNT - 1, clutils::GPUTimer<std::milli>(oc_state.clEnv.devices[0][0]));
+    copy_timer.assign(FRAME_COUNT, clutils::GPUTimer<std::milli>(oc_state.clEnv.devices[0][0]));
+    fitter_timer.assign(FRAME_COUNT, clutils::GPUTimer<std::milli>(oc_state.clEnv.devices[0][0]));
+    weighted_sum_timer.assign(FRAME_COUNT, clutils::GPUTimer<std::milli>(oc_state.clEnv.devices[0][0]));
+    accum_filtered_timer.assign(FRAME_COUNT - 1, clutils::GPUTimer<std::milli>(oc_state.clEnv.devices[0][0]));
+    taa_timer.assign(FRAME_COUNT - 1, clutils::GPUTimer<std::milli>(oc_state.clEnv.devices[0][0]));
 
     clutils::ProfilingInfo<FRAME_COUNT - 1> profile_info_accum_noisy(
         "Accumulation of noisy data");
@@ -500,20 +518,19 @@ int tasks(ImageData& image_data,
     clutils::ProfilingInfo<FRAME_COUNT - 1> profile_info_total(
         "Total time in all kernels (including intermediate launch overheads)");
 
-    printf("Run and profile kernels.\n");
     // Note: in real use case there would not be WriteBuffer and ReadBuffer function calls
     // because the input data comes from the path tracer and output goes to the screen
     for (int frame = 0; frame < FRAME_COUNT; ++frame)
     {
 
-        queue.enqueueWriteBuffer(albedo_buffer, true, 0, IMAGE_WIDTH * IMAGE_HEIGHT * 3 *
-                                 sizeof(cl_float), image_data.albedos[frame].data());
-        queue.enqueueWriteBuffer(*normals_buffer.current(), true, 0, IMAGE_WIDTH *
-                                 IMAGE_HEIGHT * 3 * sizeof(cl_float), image_data.normals[frame].data());
-        queue.enqueueWriteBuffer(*positions_buffer.current(), true, 0, IMAGE_WIDTH *
-                                 IMAGE_HEIGHT * 3 * sizeof(cl_float), image_data.positions[frame].data());
-        queue.enqueueWriteBuffer(*noisy_buffer.current(), true, 0, IMAGE_WIDTH * IMAGE_HEIGHT *
-                                 3 * sizeof(cl_float), image_data.noisy_input[frame].data());
+        oc_state.queue.enqueueWriteBuffer(albedo_buffer, true, 0, IMAGE_WIDTH * IMAGE_HEIGHT * 3 *
+					  sizeof(cl_float), image_data.albedos[frame].data());
+        oc_state.queue.enqueueWriteBuffer(*normals_buffer.current(), true, 0, IMAGE_WIDTH *
+					  IMAGE_HEIGHT * 3 * sizeof(cl_float), image_data.normals[frame].data());
+        oc_state.queue.enqueueWriteBuffer(*positions_buffer.current(), true, 0, IMAGE_WIDTH *
+					  IMAGE_HEIGHT * 3 * sizeof(cl_float), image_data.positions[frame].data());
+        oc_state.queue.enqueueWriteBuffer(*noisy_buffer.current(), true, 0, IMAGE_WIDTH * IMAGE_HEIGHT *
+					  3 * sizeof(cl_float), image_data.noisy_input[frame].data());
 
         // On the first frame accum_noisy_kernel just copies to the in_buffer
         arg_index = 2;
@@ -532,13 +549,13 @@ int tasks(ImageData& image_data,
         accum_noisy_kernel.setArg(arg_index++, sizeof(cl_float2),
                                   &(pixel_offsets[frame][0]));
         accum_noisy_kernel.setArg(arg_index++, sizeof(cl_int), &frame);
-        queue.enqueueNDRangeKernel(accum_noisy_kernel, cl::NullRange, accum_global, local,
+        oc_state.queue.enqueueNDRangeKernel(accum_noisy_kernel, cl::NullRange, accum_global, local,
                                    nullptr, &accum_noisy_timer[matrix_index].event());
 
         arg_index = 5;
         fitter_kernel.setArg(arg_index++, in_buffer);
         fitter_kernel.setArg(arg_index++, sizeof(cl_int), &frame);
-        queue.enqueueNDRangeKernel(fitter_kernel, cl::NullRange, fitter_global,
+        oc_state.queue.enqueueNDRangeKernel(fitter_kernel, cl::NullRange, fitter_global,
                                    fitter_local, nullptr, &fitter_timer[frame].event());
 
         arg_index = 3;
@@ -546,7 +563,7 @@ int tasks(ImageData& image_data,
         weighted_sum_kernel.setArg(arg_index++, *positions_buffer.current());
         weighted_sum_kernel.setArg(arg_index++, *noisy_buffer.current());
         weighted_sum_kernel.setArg(arg_index++, sizeof(cl_int), &frame);
-        queue.enqueueNDRangeKernel(weighted_sum_kernel, cl::NullRange, output_global,
+        oc_state.queue.enqueueNDRangeKernel(weighted_sum_kernel, cl::NullRange, output_global,
                                    local, nullptr, &weighted_sum_timer[frame].event());
 
         arg_index = 5;
@@ -554,7 +571,7 @@ int tasks(ImageData& image_data,
         accum_filtered_kernel.setArg(arg_index++, *out_buffer.previous());
         accum_filtered_kernel.setArg(arg_index++, *out_buffer.current());
         accum_filtered_kernel.setArg(arg_index++, sizeof(cl_int), &frame);
-        queue.enqueueNDRangeKernel(accum_filtered_kernel, cl::NullRange, output_global,
+        oc_state.queue.enqueueNDRangeKernel(accum_filtered_kernel, cl::NullRange, output_global,
                                    local, nullptr, &accum_filtered_timer[matrix_index].event());
 
         arg_index = 2;
@@ -565,15 +582,15 @@ int tasks(ImageData& image_data,
 	taa_kernel.setArg(arg_index++, vis_buffer); //
 #endif
 		
-        queue.enqueueNDRangeKernel(taa_kernel, cl::NullRange, output_global, local,
+        oc_state.queue.enqueueNDRangeKernel(taa_kernel, cl::NullRange, output_global, local,
                                    nullptr, &taa_timer[matrix_index].event());
 
         // This is not timed because in real use case the result is stored to frame buffer
 #ifdef WITH_VISBUF
-	queue.enqueueReadBuffer(vis_buffer, false, 0,
+	oc_state.queue.enqueueReadBuffer(vis_buffer, false, 0,
 	 			OUTPUT_SIZE * 3 * sizeof(cl_float), image_data.out_data[frame].data()); //
 #else
-	queue.enqueueReadBuffer(*result_buffer.current(), false, 0,
+	oc_state.queue.enqueueReadBuffer(*result_buffer.current(), false, 0,
 				OUTPUT_SIZE * 3 * sizeof(cl_float), image_data.out_data[frame].data());
 
 #endif 
@@ -582,7 +599,7 @@ int tasks(ImageData& image_data,
         std::for_each(all_double_buffers.begin(), all_double_buffers.end(),
                       std::bind(&Double_buffer<cl::Buffer>::swap, std::placeholders::_1));
     }
-    queue.finish();
+    oc_state.queue.finish();
 
     // Store profiling data
     for (int i = 0; i < FRAME_COUNT; ++i)
@@ -590,20 +607,33 @@ int tasks(ImageData& image_data,
         if (i > 0)
         {
             profile_info_accum_noisy[i - 1] = accum_noisy_timer[i - 1].duration();
+	    profile_state.times[ProfileState::Indices::accumulation_noisy].push_back(accum_noisy_timer[i - 1].duration());
+	    
             profile_info_accum_filtered[i - 1] = accum_filtered_timer[i - 1].duration();
+	    profile_state.times[ProfileState::Indices::accumulation_filtered].push_back(accum_filtered_timer[i - 1].duration());
+	    
             profile_info_taa[i - 1] = taa_timer[i - 1].duration();
+	    profile_state.times[ProfileState::Indices::taa].push_back(taa_timer[i - 1].duration());
 
+	    
             cl_ulong total_start =
                 accum_noisy_timer[i - 1].event().getProfilingInfo<CL_PROFILING_COMMAND_START>();
             cl_ulong total_end =
                 taa_timer[i - 1].event().getProfilingInfo<CL_PROFILING_COMMAND_END>();
             profile_info_total[i - 1] =
                 (total_end - total_start) * taa_timer[i - 1].getUnit();
+
+	    profile_state.times[ProfileState::Indices::total].push_back((total_end - total_start) * taa_timer[i - 1].getUnit());
+	    
         }
         profile_info_fitter[i] = fitter_timer[i].duration();
+	profile_state.times[ProfileState::Indices::fitting].push_back(fitter_timer[i].duration());
+	
         profile_info_weighted_sum[i] = weighted_sum_timer[i].duration();
+	profile_state.times[ProfileState::Indices::weighted_sum].push_back(weighted_sum_timer[i].duration());
     }
 
+#ifndef EVALUATION_MODE
     if (FRAME_COUNT > 1)
         profile_info_accum_noisy.print(output_stream);
     profile_info_fitter.print(output_stream);
@@ -614,6 +644,7 @@ int tasks(ImageData& image_data,
         profile_info_taa.print(output_stream);
         profile_info_total.print(output_stream);
     }
+#endif
 
     return 0;
 }
@@ -631,46 +662,146 @@ int run_evaluation_mode(ImageData& image_data) {
   };
     
   std::vector<std::string> scaled_buffers = {
-    "world_position.x",
-    "world_position.y",
-    "world_position.z",
-    "world_position.x*world_position.x",
-    "world_position.y*world_position.y",
-    "world_position.z*world_position.z"
+      "world_position.x",
+      "world_position.y",
+      "world_position.z",
+      "world_position.x*world_position.x",
+      "world_position.y*world_position.y",
+      "world_position.z*world_position.z"
   };
 
-  std::string str1 = not_scaled_buffers[0];
+  OpenCLState ocl_state;
+  initOpenCL(ocl_state);
+
+  std::vector<bool> added_buffers(not_scaled_buffers.size() + scaled_buffers.size(), false);
+
+  int sum_num_buffers = not_scaled_buffers.size() + scaled_buffers.size();
+
+  std::string str1 = "";
   std::string str2 = "";
-  int num = 1;
 
   std::ofstream result_stream("results/results.txt");
-  
+
+  const int MAX_BUFFERS = 12; // Maximum amount of features we'll add
+
+  int num_added = 0;
+
+  json::json profile_list;
+
+  std::cout << "Going into while loop" << std::endl;
   while(true) {
-    tasks(image_data,
-	  str1,
-	  str2, result_stream);
-    if(num < (int)not_scaled_buffers.size()) {
-      str1 += "," + not_scaled_buffers[num];
-    } else if(num - not_scaled_buffers.size() < scaled_buffers.size()) {
-      str2 += ",";
-      str2 += scaled_buffers[num - not_scaled_buffers.size()];
-    } else {
-      std::cout << "Iterated through all buffers" << std::endl;
-      break;
-    }
+      if(num_added >= MAX_BUFFERS || num_added >= sum_num_buffers) {
+	  break;
+      }
 
-    DiffResultState diff_result = computeDiff(image_iterator);
+      int best_ind = -1;
+      float best_score = -1;
 
-    // std::cout << "RMSE result using " << num << " feature buffers: " << diff_result.means[DIFF_RMSE_INDEX] << std::endl;
-    // std::cout << "VMAF result using " << num << " feature buffers: " << diff_result.means[DIFF_VMAF_INDEX] << std::endl;
-    outputResult(diff_result, "results/diff_results" + std::to_string(num) + ".txt");
-    
-    writeOutputImages(image_data, "results/" + std::to_string(num) + "buffers");
-						 
-    num++;
-    image_iterator.reset();
+      
+      for(size_t i = 0; i < not_scaled_buffers.size() + scaled_buffers.size(); i++) {
+	  if(added_buffers[i]) {
+	      continue;
+	  }
+	  
+	  std::cout << "Loop iteration " << num_added << ", " << i << std::endl;
+	  
+	  bool is_scaled = i >= not_scaled_buffers.size();
+	  
+	  std::string buf = is_scaled ?
+	      scaled_buffers[i - not_scaled_buffers.size()] :
+	      not_scaled_buffers[i];
+	  
+	  std::string tmp_str1 = str1;
+	  std::string tmp_str2 = str2;
 
+	  if(is_scaled) {
+	      if(tmp_str1.length() != 0) {
+		  tmp_str1 += ",";
+	      }
+	      tmp_str1 += buf;
+	  } else {
+	      if(tmp_str2.length() != 0) {
+		  tmp_str2 += ",";
+	      }
+	      tmp_str2 += buf;
+	  }
+
+	  // Make sure we have separator if both are non-empty
+	  if(tmp_str1.length() > 0 && tmp_str2.length() > 0) {
+	      tmp_str1 += ",";
+	  }
+	  
+	  ProfileState profile_state;
+	  tasks(image_data,
+		profile_state,
+		ocl_state,
+		tmp_str1,
+		tmp_str2, result_stream);
+
+	  DiffResultState diff_result = computeDiff(image_iterator);
+
+	  float vmaf_score = diff_result.means[DIFF_VMAF_INDEX];
+	  
+	  if(vmaf_score > best_score) {
+	      best_ind = i;
+	      best_score = vmaf_score;
+	  }
+
+	  image_iterator.reset();
+      }
+
+      added_buffers[best_ind] = true;
+      
+      bool is_best_scaled = best_ind >= (int)not_scaled_buffers.size();
+      std::string buf = is_best_scaled ?
+	  scaled_buffers[best_ind - not_scaled_buffers.size()] :
+	  not_scaled_buffers[best_ind];
+
+      std::cout << "Picked " << buf << " as buffer number " << num_added << std::endl;
+      
+      if(is_best_scaled) {
+	  if(str1.length() != 0) {
+	      str1 += ",";
+	  }
+	  str1 += buf;
+      } else {
+	  if(str2.length() != 0) {
+	      str2 += ",";
+	  }
+	  str2 += buf;
+      }
+
+      std::string real_str2 = str2;
+      if(str1.length() > 0 && str2.length() > 0) {
+	  real_str2 = std::string(",") + real_str2;
+      }
+
+      std::cout << "Current choice of buffers is " << str1 << real_str2 << std::endl;
+
+      // We run it once more, to save the stats. Not ideal, but it works
+      ProfileState profile_state;
+      tasks(image_data,
+	    profile_state,
+	    ocl_state,
+	    str1,
+	    real_str2, result_stream);
+
+      
+      DiffResultState diff_result = computeDiff(image_iterator);
+      outputResult(diff_result, "results/diff_results" + std::to_string(num_added) + ".txt", false);
+
+
+      json::json profile_obj = getProfileObj(profile_state);
+      profile_list[std::to_string(num_added + 1)] = profile_obj;
+	           
+      writeOutputImages(image_data, "results/" + std::to_string(num_added) + "buffers"); 
+
+      num_added++;
+      
+      image_iterator.reset();
   }
+
+  result_stream << profile_list << std::endl;
 
   result_stream.close();
  
@@ -687,8 +818,13 @@ int main()
 #ifdef EVALUATION_MODE
       return run_evaluation_mode(image_data);
 #else
+      ProfileState profile_state;
+      OpenCLState oc_state;
+      initOpenCL(oc_state);
       
       int result = tasks(image_data,
+			 profile_state,
+			 oc_state,
 			 NOT_SCALED_FEATURE_BUFFERS,
 			 SCALED_FEATURE_BUFFERS);
       writeOutputImages(image_data, OUTPUT_FILE_NAME);
