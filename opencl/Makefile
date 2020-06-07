@@ -56,7 +56,7 @@ bmfr-debug: bmfr.cpp CLUtils/CLUtils.hpp CLUtils/CLUtils.cpp
 	$(CC) $(CFLAGS) -o $@ $^ $(INC_DIRS:%=-I%) $(LIB_DIRS:%=-L%) $(LIBS) -D WITH_VISBUF
 
 bmfr-evaluate: bmfr.cpp CLUtils/CLUtils.hpp CLUtils/CLUtils.cpp
-	$(CC) $(CFLAGS) -o $@ $^ $(INC_DIRS:%=-I%) $(LIB_DIRS:%=-L%) $(LIBS) -D EVALUATION_MODE -I $(DIFFCAL_DIR) -l diffcal -L $(DIFFCAL_DIR)
+	$(CC) $(CFLAGS) -o $@ $^ $(INC_DIRS:%=-I%) $(LIB_DIRS:%=-L%) $(LIBS) -D EVALUATION_MODE -I $(DIFFCAL_DIR) -l diffcal -L $(DIFFCAL_DIR) -lvmaf
 
 .PHONY: clean
 
