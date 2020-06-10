@@ -358,7 +358,7 @@ int tasks(ImageData& image_data,
         std::count(features_not_scaled.begin(), features_not_scaled.end(), ',');
     // + 1 because last one does not have ',' after it.
     const int features_scaled_count =
-        std::count(features_scaled.begin(), features_scaled.end(), ',') + 1;
+        std::count(features_scaled.begin(), features_scaled.end(), ',') + (features_scaled.length() > 0 ?  1 : 0);
 
     // + 3 stands for three noisy channels.
     const int buffer_count = features_not_scaled_count + features_scaled_count + 3;
