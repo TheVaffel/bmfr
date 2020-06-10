@@ -354,8 +354,12 @@ int tasks(ImageData& image_data,
 {
     std::string features_not_scaled(not_scaled_feature_buffers);
     std::string features_scaled(scaled_feature_buffers);
-    const int features_not_scaled_count =
+    int features_not_scaled_count =
         std::count(features_not_scaled.begin(), features_not_scaled.end(), ',');
+
+    if(features_not_scaled_count == 0 && features_not_scaled.length() > 0) {
+	features_not_scaled_count = 1;
+    }
     // + 1 because last one does not have ',' after it.
     const int features_scaled_count =
         std::count(features_scaled.begin(), features_scaled.end(), ',') + (features_scaled.length() > 0 ?  1 : 0);
@@ -652,7 +656,6 @@ int tasks(ImageData& image_data,
 #ifdef EVALUATION_MODE
 int run_evaluation_mode(ImageData& image_data) {
   ImageDataIterator image_iterator(0, image_data, IMAGE_WIDTH, IMAGE_HEIGHT);
-  std::cout << "Image width/height: " << IMAGE_WIDTH << ", " << IMAGE_HEIGHT << std::endl;
 
   std::vector<std::string> not_scaled_buffers = {
     "1.f",
@@ -688,7 +691,6 @@ int run_evaluation_mode(ImageData& image_data) {
 
   json::json profile_list;
 
-  std::cout << "Going into while loop" << std::endl;
   while(true) {
       if(num_added >= MAX_BUFFERS || num_added >= sum_num_buffers) {
 	  break;
@@ -714,7 +716,7 @@ int run_evaluation_mode(ImageData& image_data) {
 	  std::string tmp_str1 = str1;
 	  std::string tmp_str2 = str2;
 
-	  if(is_scaled) {
+	  if(!is_scaled) {
 	      if(tmp_str1.length() != 0) {
 		  tmp_str1 += ",";
 	      }
@@ -759,7 +761,7 @@ int run_evaluation_mode(ImageData& image_data) {
 
       std::cout << "Picked " << buf << " as buffer number " << num_added << std::endl;
       
-      if(is_best_scaled) {
+      if(!is_best_scaled) {
 	  if(str1.length() != 0) {
 	      str1 += ",";
 	  }
@@ -771,20 +773,20 @@ int run_evaluation_mode(ImageData& image_data) {
 	  str2 += buf;
       }
 
-      std::string real_str2 = str2;
+      std::string real_str1 = str1;
       if(str1.length() > 0 && str2.length() > 0) {
-	  real_str2 = std::string(",") + real_str2;
+	  real_str1 += ",";
       }
 
-      std::cout << "Current choice of buffers is " << str1 << real_str2 << std::endl;
+      std::cout << "Current choice of buffers is " << real_str1 << str2 << std::endl;
 
       // We run it once more, to save the stats. Not ideal, but it works
       ProfileState profile_state;
       tasks(image_data,
 	    profile_state,
 	    ocl_state,
-	    str1,
-	    real_str2, result_stream);
+	    real_str1,
+	    str2, result_stream);
 
       
       DiffResultState diff_result = computeDiff(image_iterator);
