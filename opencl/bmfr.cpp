@@ -345,6 +345,18 @@ json::json getProfileObj(ProfileState& profile_state) {
     return obj;
 }
 
+template <unsigned int num>
+json::json getProfileArray(clutils::ProfilingInfo<num>& profile) {
+    json::json arr = json::json::array();
+
+
+    for(unsigned int i = 0; i < num; i++) {
+	arr.push_back(profile[i]);
+    }
+
+    return arr;
+}
+
 int tasks(ImageData& image_data,
 	  ProfileState& profile_state,
 	  OpenCLState& oc_state,
@@ -637,7 +649,30 @@ int tasks(ImageData& image_data,
 	profile_state.times[ProfileState::Indices::weighted_sum].push_back(weighted_sum_timer[i].duration());
     }
 
+    
+
 #ifndef EVALUATION_MODE
+    json::json accum_noisy_arr = getProfileArray(profile_info_accum_noisy);
+    json::json accum_filtered_arr = getProfileArray(profile_info_accum_filtered);
+    json::json taa_arr = getProfileArray(profile_info_taa);
+    json::json fitter_arr = getProfileArray(profile_info_fitter);
+    json::json weighted_sum_arr = getProfileArray(profile_info_weighted_sum);
+    json::json total_arr = getProfileArray(profile_info_total);
+
+    json::json out_object = {};
+    out_object["accum_noisy"] = accum_noisy_arr;
+    out_object["accum_filtered"] = accum_filtered_arr;
+    out_object["taa"] = taa_arr;
+    out_object["fitter"] = fitter_arr;
+    out_object["weighted_sum"] = weighted_sum_arr;
+    out_object["total"] = total_arr;
+
+    std::string out_object_name = OUTPUT_FILE_NAME + std::string("_time_results.json");
+    std::ofstream out_object_file(out_object_name);
+    out_object_file << std::setw(4) << out_object << std::endl;
+    out_object_file.close();
+    std::cout << "Wrote time results to " << out_object_name << std::endl;
+    
     if (FRAME_COUNT > 1)
         profile_info_accum_noisy.print(output_stream);
     profile_info_fitter.print(output_stream);
