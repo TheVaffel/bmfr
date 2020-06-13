@@ -775,7 +775,7 @@ int run_evaluation_mode(ImageData& image_data) {
 		tmp_str1,
 		tmp_str2, result_stream);
 
-	  DiffResultState diff_result = computeDiff(image_iterator);
+	  DiffResultState diff_result = computeDiff(image_iterator, false); // without ssim
 
 	  float vmaf_score = diff_result.means[DIFF_VMAF_INDEX];
 	  
@@ -824,7 +824,7 @@ int run_evaluation_mode(ImageData& image_data) {
 	    str2, result_stream);
 
       
-      DiffResultState diff_result = computeDiff(image_iterator);
+      DiffResultState diff_result = computeDiff(image_iterator, true); // with ssim
       outputResult(diff_result, "results/diff_results" + std::to_string(num_added) + ".txt", false);
 
 
