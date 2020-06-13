@@ -81,19 +81,35 @@ namespace OpenImageIO = OIIO;
 #define TAA_BLEND_ALPHA 0.2f
 // NOTE: if you want to use other than normal and world_position data you have to make
 // it available in the first accumulation kernel and in the weighted sum kernel
-#define NOT_SCALED_FEATURE_BUFFERS \
+/* #define NOT_SCALED_FEATURE_BUFFERS \
 "1.f,"\
 "normal.x,"\
 "normal.y,"\
-"normal.z,"\
+"normal.z,"\ */
+
 // The next features are not in the range from -1 to 1 so they are scaled to be from 0 to 1.
-#define SCALED_FEATURE_BUFFERS \
+
+/* #define SCALED_FEATURE_BUFFERS \
 "world_position.x,"\
 "world_position.y,"\
 "world_position.z,"\
 "world_position.x*world_position.x,"\
 "world_position.y*world_position.y,"\
-"world_position.z*world_position.z"
+"world_position.z*world_position.z" */
+
+#define NOT_SCALED_FEATURE_BUFFERS \
+"1.f,"\
+"normal.z * normal.z,"\
+"normal.x,"\
+"normal.z,"\
+"normal.y*normal.y,"\
+
+#define SCALED_FEATURE_BUFFERS \
+"world_position.x*world_position.x,"\
+"world_position.x*world_position.z,"\
+"world_position.y*wold_position.y,"\
+"world_position.y*normal.y,"\
+"world_position.y*world_position.z"
 
 
 // ### Edit these defines to change optimizations for your target hardware ###
